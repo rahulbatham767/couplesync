@@ -15,12 +15,6 @@ export interface RoomState {
   compatibility_score: number | null
 }
 
-function isSupabaseConfigured(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  return url.startsWith('https://') && !url.includes('placeholder') && key.length > 20 && !key.includes('placeholder')
-}
-
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
@@ -56,13 +50,6 @@ export function useRoom() {
     const roomQuestions = getQuestionsForRoom(code)
     setQuestions(roomQuestions)
 
-    if (!isSupabaseConfigured()) {
-      setRoom({ id: uuidv4(), code, status: 'waiting', user1_id: userId, user2_id: null, current_question: 0, compatibility_score: null })
-      setUsingLocalMode(true)
-      setLoading(false)
-      return
-    }
-
     try {
       // FIX: Use maybeSingle() to handle potential race conditions during insertion
       const { data, error: err } = await supabase
@@ -88,7 +75,7 @@ export function useRoom() {
     const upperCode = code.trim().toUpperCase()
     setQuestions(getQuestionsForRoom(upperCode))
 
-    if (usingLocalMode || !isSupabaseConfigured()) {
+    if (usingLocalMode) {
       if (room && room.code === upperCode) {
         setRoom({ ...room, user2_id: userId, status: 'active' })
         setUsingLocalMode(true)
@@ -197,7 +184,7 @@ export function useRoom() {
   }, [room, userId, isUser1, partnerAnswers, userAnswers, usingLocalMode, questions])
 
   useEffect(() => {
-    if (!room || usingLocalMode || !isSupabaseConfigured()) return
+    if (!room || usingLocalMode) return
     if (channelRef.current) supabase.removeChannel(channelRef.current)
 
     const ch = supabase
@@ -224,7 +211,7 @@ export function useRoom() {
   }, [room?.id, usingLocalMode, userId])
 
   useEffect(() => {
-    if (!room || room.status === 'waiting' || usingLocalMode || !isSupabaseConfigured()) return
+    if (!room || room.status === 'waiting' || usingLocalMode) return
     supabase.from('responses').select().eq('room_id', room.id).then(({ data }) => {
       if (!data) return
       const mine: Record<number, string> = {}
