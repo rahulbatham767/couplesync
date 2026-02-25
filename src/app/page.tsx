@@ -40,11 +40,7 @@ export default function Home() {
   }, [room?.code])
   // ------------------------------------------------------------------
 
-console.log(
-      'HF SUPABASE?',
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.slice(0, 8)
-    )
+
   // Transition: waiting room → quiz when partner joins
   useEffect(() => {
     if (room?.status === 'active' && appState === 'lobby') {
