@@ -1,4 +1,15 @@
-<<<<<<< HEAD
+---
+title: Couplesync
+emoji: 🐠
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+pinned: false
+short_description: CoupleSync is a fun, interactive relationship game designed.
+---
+
+Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+
 # 💞 CoupleSync — Real-Time Compatibility Quiz
 
 A luxury dark mode couple's compatibility quiz with real-time sync via Supabase, 3D visuals, and cinematic reveal animations.
@@ -121,16 +132,3 @@ src/
     ├── questions.ts         # Quiz data + scoring
     └── schema.sql           # Database schema
 ```
-=======
----
-title: Couplesync
-emoji: 🐠
-colorFrom: indigo
-colorTo: blue
-sdk: docker
-pinned: false
-short_description: CoupleSync is a fun, interactive relationship game designed.
----
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
->>>>>>> bf9812db54c733634aceca9194366368e66fda6c
