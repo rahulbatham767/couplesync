@@ -4,68 +4,10 @@ import { ALL_QUESTIONS, calculateCompatibility } from '@/lib/questions'
 
 export const runtime = 'nodejs'
 
-function isSupabaseConfigured(): boolean {
+function isSupabaseConfigured() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
   return url.startsWith('https://') && !url.includes('placeholder') && key.length > 20
-}
-
-async function advanceQuestion(
-  redis: NonNullable<ReturnType<typeof getRedis>>,
-  roomId: string,
-  questionIndex: number,
-  userId: string,
-  partnerId: string,
-): Promise<{ advanced: boolean; room: Awaited<ReturnType<typeof redisGetRoom>> }> {
-  // ── ATOMIC LOCK ─────────────────────────────────────────────────────────────
-  // Only ONE request should advance the question — use Redis SET NX (set if not exists)
-  // as a distributed lock. The lock key is per-room per-question so it auto-releases.
-  const lockKey = `lock:advance:${roomId}:${questionIndex}`
-
-  // SET lock NX EX 10  →  only succeeds for the FIRST caller
-  const locked = await redis.set(lockKey, '1', { nx: true, ex: 10 })
-  if (!locked) {
-    // Another request already has the lock — it will handle advancing
-    return { advanced: false, room: await redisGetRoom(roomId) }
-  }
-
-  // We have the lock — read the definitive room state and advance
-  const room = await redisGetRoom(roomId)
-  if (!room) return { advanced: false, room: null }
-
-  // If already advanced past this question, nothing to do
-  if (room.current_question > questionIndex) {
-    return { advanced: false, room }
-  }
-
-  const totalQuestions = room.question_ids.length
-  const nextQ = questionIndex + 1
-
-  if (nextQ >= totalQuestions) {
-    // ── GAME OVER ──────────────────────────────────────────────────────────────
-    const questions = room.question_ids
-      .map(id => ALL_QUESTIONS.find(q => q.id === id)!)
-      .filter(Boolean)
-
-    const userAns: Record<number, string> = {}
-    const partnerAns: Record<number, string> = {}
-    questions.forEach((_, i) => {
-      if (room.answers[`${userId}:${i}`]) userAns[i] = room.answers[`${userId}:${i}`]
-      if (room.answers[`${partnerId}:${i}`]) partnerAns[i] = room.answers[`${partnerId}:${i}`]
-    })
-
-    const score = calculateCompatibility(userAns, partnerAns, questions)
-    const updatedRoom = { ...room, status: 'completed' as const, compatibility_score: score, current_question: nextQ }
-    await redisUpdateRoom(roomId, updatedRoom)
-    await redisPublishEvent(roomId, { type: 'game_completed', score, timestamp: Date.now() })
-    return { advanced: true, room: updatedRoom }
-  } else {
-    // ── NEXT QUESTION ──────────────────────────────────────────────────────────
-    const updatedRoom = { ...room, current_question: nextQ }
-    await redisUpdateRoom(roomId, updatedRoom)
-    await redisPublishEvent(roomId, { type: 'question_advanced', questionIndex: nextQ, timestamp: Date.now() })
-    return { advanced: true, room: updatedRoom }
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -77,12 +19,26 @@ export async function POST(req: NextRequest) {
 
     const redis = getRedis()
 
-    // ── REDIS PATH ─────────────────────────────────────────────────────────────
     if (redis) {
+      // ── STEP 1: Write this user's answer with a per-answer lock ─────────────
+      // The lock ensures only ONE write happens for this user+question combo,
+      // AND serializes the bothAnswered check so both can't miss each other.
+      const answerLockKey = `lock:answer:${roomId}:${questionIndex}`
+
+      // Acquire lock — retry up to 5 times with 100ms delay (handles tight races)
+      let lockAcquired = false
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const locked = await redis.set(answerLockKey, userId, { nx: true, ex: 15 })
+        if (locked) { lockAcquired = true; break }
+        // Another request is writing — wait briefly
+        await new Promise(r => setTimeout(r, 100))
+      }
+
+      // Read freshest room state (after any concurrent write completes)
       const room = await redisGetRoom(roomId)
       if (!room) return NextResponse.json({ error: 'Room not found' }, { status: 404 })
 
-      // Guard: don't accept answers for already-advanced questions
+      // Already advanced past this question — idempotent return
       if (room.current_question !== questionIndex) {
         return NextResponse.json({ success: true, room, backend: 'redis', skipped: true })
       }
@@ -90,21 +46,15 @@ export async function POST(req: NextRequest) {
       const partnerId = room.user1_id === userId ? room.user2_id : room.user1_id
       const answerKey = `${userId}:${questionIndex}`
 
-      // ── STEP 1: Write this user's answer atomically ─────────────────────────
-      // Use HSETNX on a answers hash so concurrent writes don't clobber each other
-      const answerHashKey = `answers:${roomId}`
-      await redis.hsetnx(answerHashKey, answerKey, answer)
-      await redis.expire(answerHashKey, 60 * 60 * 2)
+      // Write answer into room.answers — single source of truth
+      const updatedAnswers = { ...room.answers, [answerKey]: answer }
+      let updatedRoom = { ...room, answers: updatedAnswers }
+      await redisUpdateRoom(roomId, updatedRoom)
 
-      // Read all answers for this room from the hash (single consistent read)
-      const allAnswers = (await redis.hgetall(answerHashKey)) as Record<string, string> | null
-      const answers = allAnswers || {}
+      // Release the per-answer lock now that we've written
+      await redis.del(answerLockKey)
 
-      // Merge into room answers and save
-      const mergedAnswers = { ...room.answers, ...answers, [answerKey]: answer }
-      await redisUpdateRoom(roomId, { ...room, answers: mergedAnswers })
-
-      // Publish that this user answered (so partner sees their choice)
+      // Publish so partner sees this answer
       await redisPublishEvent(roomId, {
         type: 'answer_submitted',
         userId,
@@ -113,21 +63,74 @@ export async function POST(req: NextRequest) {
         timestamp: Date.now(),
       })
 
-      // ── STEP 2: Check if both answered ─────────────────────────────────────
+      // ── STEP 2: Check if both answered ──────────────────────────────────────
       const partnerAnswerKey = partnerId ? `${partnerId}:${questionIndex}` : null
-      const bothAnswered = partnerAnswerKey && answers[partnerAnswerKey]
+      const partnerAnswered = partnerAnswerKey ? !!updatedAnswers[partnerAnswerKey] : false
 
-      let finalRoom = await redisGetRoom(roomId)
+      if (partnerAnswered && partnerId) {
+        // Both answered — acquire the advance lock (only one request advances)
+        const advanceLockKey = `lock:advance:${roomId}:${questionIndex}`
+        const advanceLocked = await redis.set(advanceLockKey, '1', { nx: true, ex: 10 })
 
-      if (bothAnswered && partnerId) {
-        // Try to acquire the advance lock — only one of the two concurrent requests wins
-        const { advanced, room: advancedRoom } = await advanceQuestion(
-          redis, roomId, questionIndex, userId, partnerId
-        )
-        if (advancedRoom) finalRoom = advancedRoom
+        if (advanceLocked) {
+          // We won the lock — advance the question
+          const freshRoom = await redisGetRoom(roomId)
+          if (!freshRoom) return NextResponse.json({ success: true, room: updatedRoom, backend: 'redis' })
+
+          // Bail if already advanced (another server may have done it)
+          if (freshRoom.current_question !== questionIndex) {
+            return NextResponse.json({ success: true, room: freshRoom, backend: 'redis' })
+          }
+
+          const totalQuestions = freshRoom.question_ids.length
+          const nextQ = questionIndex + 1
+
+          if (nextQ >= totalQuestions) {
+            // ── GAME OVER: calculate final score ─────────────────────────────
+            const questions = freshRoom.question_ids
+              .map(id => ALL_QUESTIONS.find(q => q.id === id)!)
+              .filter(Boolean)
+
+            // Build answer maps indexed by position (0–4) for calculateCompatibility
+            const userAns: Record<number, string> = {}
+            const partnerAns: Record<number, string> = {}
+
+            questions.forEach((_, i) => {
+              const ua = freshRoom.answers[`${userId}:${i}`]
+              const pa = freshRoom.answers[`${partnerId}:${i}`]
+              if (ua) userAns[i] = ua
+              if (pa) partnerAns[i] = pa
+            })
+
+            const score = calculateCompatibility(userAns, partnerAns, questions)
+            const completedRoom = {
+              ...freshRoom,
+              status: 'completed' as const,
+              compatibility_score: score,
+              current_question: nextQ,
+            }
+            await redisUpdateRoom(roomId, completedRoom)
+            await redisPublishEvent(roomId, { type: 'game_completed', score, timestamp: Date.now() })
+            updatedRoom = completedRoom
+          } else {
+            // ── ADVANCE TO NEXT QUESTION ──────────────────────────────────────
+            const advancedRoom = { ...freshRoom, current_question: nextQ }
+            await redisUpdateRoom(roomId, advancedRoom)
+            await redisPublishEvent(roomId, {
+              type: 'question_advanced',
+              questionIndex: nextQ,
+              timestamp: Date.now(),
+            })
+            updatedRoom = advancedRoom
+          }
+        }
+        // If we didn't get the advance lock, the other request will handle it
+        // and both players get notified via SSE
       }
 
-      return NextResponse.json({ success: true, room: finalRoom, backend: 'redis' })
+      // Return latest room state
+      const finalRoom = await redisGetRoom(roomId)
+      return NextResponse.json({ success: true, room: finalRoom || updatedRoom, backend: 'redis' })
     }
 
     // ── SUPABASE FALLBACK ──────────────────────────────────────────────────────
@@ -141,7 +144,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: 'No backend configured' }, { status: 500 })
-  } catch (err: unknown) {
+  } catch (err) {
     console.error('Answer error:', err)
     return NextResponse.json({ error: 'Failed to submit answer' }, { status: 500 })
   }
