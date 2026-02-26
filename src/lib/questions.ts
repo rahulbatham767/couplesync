@@ -1,4 +1,4 @@
-import questionsData from './question.json'
+import questionsData from './questions.json'
 
 export interface Question {
   id: number
@@ -11,90 +11,27 @@ export interface Question {
   }[]
 }
 
+export const ALL_QUESTIONS: Question[] = questionsData as Question[]
 
-
-
-
-
-export const ALL_QUESTIONS: Question[] = (questionsData && (questionsData as Question[]).length > 0)
-  ? (questionsData as Question[])
-  : [];
-
-const FALLBACK_QUESTIONS: Question[] = [
-
-  {
-    id: 0,
-    text: "Your ideal Saturday morning together?",
-    emoji: "🌅",
-    options: [
-      { id: 'a', text: "Still in bed, breakfast ordered in", value: 1 },
-      { id: 'b', text: "Farmers market then brunch", value: 2 },
-      { id: 'c', text: "Morning hike to catch sunrise", value: 3 },
-      { id: 'd', text: "Each doing our own thing, then meeting up", value: 4 },
-    ]
-  },
-  {
-    id: 1,
-    text: "Dream vacation style?",
-    emoji: "✈️",
-    options: [
-      { id: 'a', text: "Luxury resort, total relaxation", value: 1 },
-      { id: 'b', text: "Cultural immersion, hidden gems", value: 2 },
-      { id: 'c', text: "Adventure sports, thrill-seeking", value: 3 },
-      { id: 'd', text: "Road trip, spontaneous detours", value: 4 },
-    ]
-  },
-  {
-    id: 2,
-    text: "How do you handle conflict?",
-    emoji: "💬",
-    options: [
-      { id: 'a', text: "Talk it out immediately, no waiting", value: 1 },
-      { id: 'b', text: "Need space first, then discuss calmly", value: 2 },
-      { id: 'c', text: "Write it out, then share feelings", value: 3 },
-      { id: 'd', text: "Distract, then revisit when calm", value: 4 },
-    ]
-  },
-  {
-    id: 3,
-    text: "Love language that resonates most?",
-    emoji: "💝",
-    options: [
-      { id: 'a', text: "Words of affirmation — tell me you love me", value: 1 },
-      { id: 'b', text: "Quality time — present, phone away", value: 2 },
-      { id: 'c', text: "Physical touch — hand-holding, cuddles", value: 3 },
-      { id: 'd', text: "Acts of service — doing things without asking", value: 4 },
-    ]
-  },
-  {
-    id: 4,
-    text: "Five years from now, you envision...",
-    emoji: "🔮",
-    options: [
-      { id: 'a', text: "Cozy home, maybe a pet or two", value: 1 },
-      { id: 'b', text: "Traveling the world together", value: 2 },
-      { id: 'c', text: "Building something creative together", value: 3 },
-      { id: 'd', text: "Growing a family, roots in a community", value: 4 },
-    ]
-  },]
-
-
-
+// Pick N random questions from the pool — seeded by room code so
+// both players always get the same set
 export function getQuestionsForRoom(roomCode: string, count = 5): Question[] {
-  console.log("All question are", ALL_QUESTIONS);
-
-  const sourceArray = ALL_QUESTIONS.length > 0 ? ALL_QUESTIONS : FALLBACK_QUESTIONS;
+  // Simple seeded shuffle using room code chars as seed
   const seed = roomCode.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
-  const shuffled = [...sourceArray]
+  const shuffled = [...ALL_QUESTIONS]
+
+  // Fisher-Yates with deterministic seed
   let s = seed
   for (let i = shuffled.length - 1; i > 0; i--) {
     s = (s * 1664525 + 1013904223) & 0xffffffff
     const j = Math.abs(s) % (i + 1)
-      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
+
   return shuffled.slice(0, count)
 }
 
+// Fallback: first 5 questions (used before room code is known)
 export const QUIZ_QUESTIONS: Question[] = ALL_QUESTIONS.slice(0, 5)
 
 export function calculateCompatibility(
@@ -109,6 +46,7 @@ export function calculateCompatibility(
     const uAns = userAnswers[i]
     const pAns = partnerAnswers[i]
     if (!uAns || !pAns) return
+
     if (uAns === pAns) {
       score += 20
     } else {

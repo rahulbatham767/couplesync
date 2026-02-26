@@ -1,9 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
-// on platforms where build-time env vars are not injected (e.g. HF Docker Spaces).
-const supabaseUrl = 'https://aqjktdjdljelybkbeuvs.supabase.co'
-const supabaseAnonKey =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxamt0ZGpkbGplbHlia2JldXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMzgzNzQsImV4cCI6MjA4NzYxNDM3NH0.ActxQb8x8GckPsPckzso-DCxOeZ2gCI2CIu3JTbE3s4'
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key'
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   realtime: {

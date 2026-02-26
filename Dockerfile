@@ -1,47 +1,50 @@
+# ── Stage 1: Dependencies ────────────────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
 
-# Install system dependencies
+# Install dependencies needed for native modules
 RUN apk add --no-cache libc6-compat
 
-# Install dependencies based on lockfile, falling back to npm install
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
-RUN \
-    if [ -f package-lock.json ]; then npm ci; \
-    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
-    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \
-    else npm install; \
-    fi
+COPY package.json package-lock.json* ./
+RUN npm ci --only=production=false
 
+# ── Stage 2: Builder ─────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
-
-RUN apk add --no-cache libc6-compat
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ENV NODE_ENV=production
+# Build args for env vars needed at build time (NEXT_PUBLIC_* only)
+ARG NEXT_PUBLIC_SUPABASE_URL=""
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
 
 RUN npm run build
 
+# ── Stage 3: Runner ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat
-
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# Hugging Face Docker Spaces expect the app on port 7860
+# Hugging Face Spaces requires port 7860
 ENV PORT=7860
+ENV HOSTNAME="0.0.0.0"
 
-# Copy only the files needed to run the app
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/package.json ./package.json
-COPY --from=deps /app/node_modules ./node_modules
+# Create non-root user (HF Spaces requirement)
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy built app
+COPY --from=builder /app/public ./public 2>/dev/null || true
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
 
 EXPOSE 7860
 
-CMD ["npm", "run", "start"]
+CMD ["node", "server.js"]

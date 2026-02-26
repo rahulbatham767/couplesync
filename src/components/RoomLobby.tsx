@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { Users, Plus, ArrowRight, Copy, Check, Wifi } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Plus, ArrowRight, Copy, Check, Wifi, Zap } from 'lucide-react'
+import { GameMode } from '@/hooks/useRoom'
 
 interface LobbyProps {
   onCreateRoom: () => void
@@ -12,205 +13,222 @@ interface LobbyProps {
   loading?: boolean
   error?: string | null
   partnerJoined?: boolean
+  gameMode?: GameMode
 }
 
 export default function RoomLobby({
-  onCreateRoom,
-  onJoinRoom,
-  roomCode,
-  waiting,
-  loading,
-  error,
-  partnerJoined,
+  onCreateRoom, onJoinRoom, roomCode,
+  waiting, loading, error, partnerJoined, gameMode,
 }: LobbyProps) {
+  const [view, setView] = useState<'select' | 'join'>('select')
   const [joinCode, setJoinCode] = useState('')
-  const [mode, setMode] = useState<'select' | 'join' | 'created'>('select')
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
-    if (roomCode) {
-      navigator.clipboard.writeText(roomCode)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
+    if (!roomCode) return
+    navigator.clipboard.writeText(roomCode).catch(() => { })
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
-  if (waiting || roomCode) {
+  const isLive = gameMode === 'redis' || gameMode === 'supabase'
+
+  // ── WAITING SCREEN ───────────────────────────────────────────────────────────
+  if (roomCode) {
+    console.log(roomCode);
+    console.log(partnerJoined);
+
     return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md mx-auto px-4 text-center"
-      >
-        <div className="glass-dark rounded-3xl p-8 border border-neon-pink/20">
-          <div className="text-4xl mb-4">🔗</div>
-          <h2
-            className="text-2xl text-white mb-2"
-            style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic' }}
-          >
+      <motion.div key="waiting"
+        initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-md mx-auto px-4 text-center">
+        <div className="rounded-3xl p-8"
+          style={{ background: 'rgba(5,5,8,0.75)', backdropFilter: 'blur(30px)', border: '1px solid rgba(255,45,120,0.2)' }}>
+
+          {/* Backend badge */}
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+            className="mb-5 px-4 py-1.5 rounded-full text-xs inline-flex items-center gap-2"
+            style={{
+              background: isLive ? 'rgba(74,222,128,0.1)' : 'rgba(168,85,247,0.1)',
+              border: `1px solid ${isLive ? 'rgba(74,222,128,0.3)' : 'rgba(168,85,247,0.3)'}`,
+              color: isLive ? '#4ade80' : '#c084fc',
+            }}>
+            <Zap size={10} />
+            {isLive ? `${gameMode === 'redis' ? 'Redis' : 'Supabase'} · Real-time ready` : 'Demo mode · No backend needed'}
+          </motion.div>
+
+          <div className="text-4xl mb-3">🔗</div>
+          <h2 className="text-2xl text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
             Room Created
           </h2>
           <p className="text-gray-400 text-sm mb-6">Share this code with your partner</p>
 
-          {/* Room code display */}
+          {/* Code */}
           <div className="relative mb-6">
-            <div
-              className="text-5xl font-bold tracking-[0.3em] py-6 rounded-2xl border border-neon-pink/30 bg-neon-pink/5"
-              style={{ fontFamily: 'var(--font-display)', color: '#ff2d78', textShadow: '0 0 20px #ff2d78' }}
-            >
+            <motion.div
+              className="py-6 rounded-2xl text-5xl font-bold tracking-[0.3em] cursor-pointer select-all"
+              style={{
+                fontFamily: 'var(--font-display)',
+                color: '#ff2d78',
+                textShadow: '0 0 25px #ff2d78, 0 0 50px rgba(255,45,120,0.4)',
+                background: 'rgba(255,45,120,0.06)',
+                border: '1px solid rgba(255,45,120,0.3)',
+              }}
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', stiffness: 300, delay: 0.1 }}
+              onClick={handleCopy}>
               {roomCode}
-            </div>
-            <button
-              onClick={handleCopy}
-              className="absolute top-3 right-3 p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-            >
-              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} className="text-gray-400" />}
+            </motion.div>
+            <button onClick={handleCopy}
+              className="absolute top-3 right-3 p-2 rounded-lg transition-colors touch-manipulation"
+              style={{ background: 'rgba(255,255,255,0.08)', WebkitTapHighlightColor: 'transparent' }}>
+              {copied ? <Check size={14} style={{ color: '#4ade80' }} /> : <Copy size={14} style={{ color: '#9ca3af' }} />}
             </button>
           </div>
 
-          {/* Status indicator */}
-          <div className="flex items-center justify-center gap-2">
+          {/* Status */}
+          <AnimatePresence mode="wait">
             {partnerJoined ? (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="flex items-center gap-2 text-green-400"
-              >
+              <motion.div key="joined" initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                className="flex items-center gap-2 justify-center" style={{ color: '#4ade80' }}>
                 <Wifi size={14} />
-                <span className="text-sm">Partner connected! Starting...</span>
+                <span className="text-sm font-medium">Partner connected! Starting...</span>
               </motion.div>
             ) : (
-              <div className="flex items-center gap-2 text-gray-400">
+              <motion.div key="waiting" className="flex items-center gap-2 justify-center" style={{ color: '#9ca3af' }}>
                 <div className="flex gap-1">
-                  <div className="typing-dot" style={{ background: '#a855f7' }} />
-                  <div className="typing-dot" style={{ background: '#a855f7' }} />
-                  <div className="typing-dot" style={{ background: '#a855f7' }} />
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="typing-dot" style={{ background: '#a855f7', animationDelay: `${i * 0.2}s` }} />
+                  ))}
                 </div>
-                <span className="text-sm">Waiting for partner to join...</span>
-              </div>
+                <span className="text-sm">Waiting for partner...</span>
+              </motion.div>
             )}
-          </div>
+          </AnimatePresence>
         </div>
       </motion.div>
     )
   }
 
+  // ── SELECT VIEW ──────────────────────────────────────────────────────────────
   return (
     <div className="w-full max-w-md mx-auto px-4">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        {mode === 'select' && (
-          <div className="space-y-4">
-            <div className="text-center mb-8">
-              <p className="text-gray-400 text-sm">Choose how to begin</p>
-            </div>
+      <AnimatePresence mode="wait">
+        {view === 'select' && (
+          <motion.div key="select"
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.3 }}
+            className="space-y-3">
 
-            <motion.button
-              onClick={() => {
-                onCreateRoom()
-                setMode('created')
+            <motion.button onClick={onCreateRoom} disabled={loading}
+              className="w-full rounded-2xl p-5 text-left group transition-all duration-300 touch-manipulation"
+              style={{
+                background: 'rgba(5,5,8,0.7)', backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255,45,120,0.2)', WebkitTapHighlightColor: 'transparent',
+                minHeight: '80px',
               }}
-              disabled={loading}
-              className="w-full glass-dark rounded-2xl p-6 border border-neon-pink/20 hover:border-neon-pink/50 transition-all group text-left"
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-neon-pink/15 flex items-center justify-center flex-shrink-0 group-hover:bg-neon-pink/25 transition-colors">
-                  <Plus size={20} className="text-neon-pink" />
+              whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
+              <div className="flex items-center gap-4">
+                <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(255,45,120,0.12)' }}>
+                  {loading
+                    ? <div className="w-5 h-5 rounded-full border-2 animate-spin" style={{ borderColor: '#ff2d78', borderTopColor: 'transparent' }} />
+                    : <Plus size={20} style={{ color: '#ff2d78' }} />}
                 </div>
-                <div>
-                  <h3 className="text-white font-medium mb-1">Create a Room</h3>
-                  <p className="text-gray-400 text-sm">Generate a code to share with your partner</p>
+                <div className="flex-1">
+                  <h3 className="text-white font-medium mb-0.5">{loading ? 'Creating...' : 'Create a Room'}</h3>
+                  <p className="text-xs" style={{ color: '#6b7280' }}>Generate a code to share</p>
                 </div>
-                <ArrowRight size={16} className="text-gray-500 ml-auto self-center group-hover:text-neon-pink transition-colors" />
+                <ArrowRight size={15} style={{ color: '#4b5563' }} />
               </div>
             </motion.button>
 
-            <motion.button
-              onClick={() => setMode('join')}
-              className="w-full glass-dark rounded-2xl p-6 border border-neon-purple/20 hover:border-neon-purple/50 transition-all group text-left"
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-purple-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-purple-500/25 transition-colors">
-                  <Users size={20} className="text-neon-purple" />
+            <motion.button onClick={() => setView('join')}
+              className="w-full rounded-2xl p-5 text-left touch-manipulation"
+              style={{
+                background: 'rgba(5,5,8,0.7)', backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(168,85,247,0.2)', WebkitTapHighlightColor: 'transparent',
+                minHeight: '80px',
+              }}
+              whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}>
+              <div className="flex items-center gap-4">
+                <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(168,85,247,0.12)' }}>
+                  <span className="text-lg">🔑</span>
                 </div>
-                <div>
-                  <h3 className="text-white font-medium mb-1">Join a Room</h3>
-                  <p className="text-gray-400 text-sm">Enter your partner's room code</p>
+                <div className="flex-1">
+                  <h3 className="text-white font-medium mb-0.5">Join a Room</h3>
+                  <p className="text-xs" style={{ color: '#6b7280' }}>Enter your partner's 6-digit code</p>
                 </div>
-                <ArrowRight size={16} className="text-gray-500 ml-auto self-center group-hover:text-neon-purple transition-colors" />
+                <ArrowRight size={15} style={{ color: '#4b5563' }} />
               </div>
             </motion.button>
 
             {error && (
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="text-red-400 text-sm text-center mt-4"
-              >
+              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                className="text-sm text-center pt-1" style={{ color: '#f87171' }}>
                 {error}
               </motion.p>
             )}
-          </div>
+          </motion.div>
         )}
 
-        {mode === 'join' && (
-          <motion.div
-            initial={{ opacity: 0, x: 30 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="glass-dark rounded-3xl p-8 border border-neon-purple/20"
-          >
-            <button
-              onClick={() => setMode('select')}
-              className="text-xs text-gray-500 hover:text-white mb-6 flex items-center gap-1 transition-colors"
-            >
+        {view === 'join' && (
+          <motion.div key="join"
+            initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 30 }} transition={{ duration: 0.3 }}
+            className="rounded-3xl p-7"
+            style={{ background: 'rgba(5,5,8,0.75)', backdropFilter: 'blur(30px)', border: '1px solid rgba(168,85,247,0.2)' }}>
+
+            <button onClick={() => { setView('select'); setJoinCode('') }}
+              className="text-xs mb-5 flex items-center gap-1 touch-manipulation" style={{ color: '#6b7280' }}>
               ← Back
             </button>
-            <h3
-              className="text-2xl text-white mb-2"
-              style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic' }}
-            >
+
+            <h3 className="text-2xl text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic' }}>
               Enter Room Code
             </h3>
-            <p className="text-gray-400 text-sm mb-6">Ask your partner for their 6-character code</p>
-            
+            <p className="text-sm mb-5" style={{ color: '#6b7280' }}>Ask your partner for their 6-character code</p>
+
             <input
               type="text"
               value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
+              onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
               placeholder="ABC123"
-              className="w-full bg-white/5 border border-white/15 rounded-xl px-5 py-4 text-white text-center text-2xl tracking-widest font-mono focus:outline-none focus:border-neon-purple/50 mb-4 transition-colors"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && joinCode.length === 6) {
-                  onJoinRoom(joinCode)
-                }
+              autoFocus
+              autoCapitalize="characters"
+              autoComplete="off"
+              className="w-full rounded-xl px-5 py-4 text-center text-2xl tracking-widest font-mono focus:outline-none mb-4 touch-manipulation"
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: `1px solid ${joinCode.length === 6 ? 'rgba(168,85,247,0.6)' : 'rgba(255,255,255,0.12)'}`,
+                color: '#fff', fontSize: '1.5rem',
+                WebkitTapHighlightColor: 'transparent',
               }}
+              onKeyDown={e => { if (e.key === 'Enter' && joinCode.length === 6) onJoinRoom(joinCode) }}
             />
 
-            {error && (
-              <p className="text-red-400 text-sm mb-4 text-center">{error}</p>
-            )}
+            {error && <p className="text-sm mb-3 text-center" style={{ color: '#f87171' }}>{error}</p>}
 
             <button
               onClick={() => onJoinRoom(joinCode)}
               disabled={joinCode.length !== 6 || loading}
-              className="w-full btn-neon rounded-xl"
-              style={{ borderColor: '#a855f7', boxShadow: '0 0 15px rgba(168,85,247,0.3)' }}
-            >
-              <span className="flex items-center gap-2 justify-center">
-                {loading ? 'Joining...' : 'Join Room'}
-                <ArrowRight size={14} />
-              </span>
+              className="w-full py-4 rounded-xl font-medium text-sm uppercase tracking-wider transition-all touch-manipulation"
+              style={{
+                background: joinCode.length === 6 ? 'linear-gradient(135deg, #a855f7, #e879f9)' : 'rgba(255,255,255,0.06)',
+                color: joinCode.length === 6 ? '#fff' : '#4b5563',
+                border: '1px solid',
+                borderColor: joinCode.length === 6 ? 'transparent' : 'rgba(255,255,255,0.08)',
+                boxShadow: joinCode.length === 6 ? '0 0 20px rgba(168,85,247,0.4)' : 'none',
+                cursor: joinCode.length !== 6 || loading ? 'not-allowed' : 'pointer',
+                minHeight: '52px', WebkitTapHighlightColor: 'transparent',
+              }}>
+              {loading ? 'Joining...' : 'Join Room →'}
             </button>
           </motion.div>
         )}
-      </motion.div>
+      </AnimatePresence>
     </div>
   )
 }

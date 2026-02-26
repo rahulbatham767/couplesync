@@ -1,10 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { RotateCcw, Sparkles, Check, Download, Share2 } from 'lucide-react'
+import { Share2, RotateCcw, Sparkles, Check, User } from 'lucide-react'
 import { getCompatibilityMessage, Question } from '@/lib/questions'
-import { toPng } from 'html-to-image'
 
 interface RevealProps {
   score: number
@@ -12,12 +11,10 @@ interface RevealProps {
   userAnswers: Record<number, string>
   partnerAnswers: Record<number, string>
   onPlayAgain: () => void
-  reelMode: boolean
+  partnerName?: string | null
+  isSolo?: boolean
 }
 
-/**
- * Animated number component for the score reveal
- */
 function CountingNumber({ target, duration = 2000 }: { target: number; duration?: number }) {
   const [current, setCurrent] = useState(0)
   const startTime = useRef<number | null>(null)
@@ -30,11 +27,7 @@ function CountingNumber({ target, duration = 2000 }: { target: number; duration?
       const progress = Math.min((timestamp - startTime.current) / duration, 1)
       const eased = 1 - Math.pow(1 - progress, 3)
       setCurrent(Math.floor(eased * target))
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(animate)
-      } else {
-        setCurrent(target)
-      }
+      if (progress < 1) { rafRef.current = requestAnimationFrame(animate) } else { setCurrent(target) }
     }
     rafRef.current = requestAnimationFrame(animate)
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
@@ -43,226 +36,198 @@ function CountingNumber({ target, duration = 2000 }: { target: number; duration?
   return <span>{current}</span>
 }
 
-/**
- * Floating background particle effect
- */
 function Particle({ color }: { color: string }) {
   const [pos] = useState(() => ({
     left: `${Math.random() * 100}vw`,
-    width: `${Math.random() * 6 + 2}px`,
-    height: `${Math.random() * 6 + 2}px`,
-    animationDuration: `${Math.random() * 4 + 3}s`,
+    width: `${Math.random() * 8 + 4}px`,
+    height: `${Math.random() * 8 + 4}px`,
+    animationDuration: `${Math.random() * 3 + 2}s`,
     animationDelay: `${Math.random() * 2}s`,
   }))
-  return (
-    <div
-      className="particle fixed rounded-full pointer-events-none opacity-40"
-      style={{
-        ...pos,
-        top: '-10px',
-        background: color,
-        boxShadow: `0 0 10px ${color}`
-      }}
-    />
-  )
+  return <div className="particle" style={{ ...pos, top: '-20px', background: color }} />
 }
 
 export default function CompatibilityReveal({
-  score,
-  questions,
-  userAnswers,
-  partnerAnswers,
-  onPlayAgain
+  score, questions, userAnswers, partnerAnswers,
+  onPlayAgain, partnerName, isSolo,
 }: RevealProps) {
   const { title, message, color } = getCompatibilityMessage(score)
   const [showAnswers, setShowAnswers] = useState(false)
-  const [downloadState, setDownloadState] = useState<'idle' | 'generating' | 'success' | 'error'>('idle')
+  const [shareState, setShareState] = useState<'idle' | 'copied' | 'shared'>('idle')
 
-  const particles = Array.from({ length: 20 }, (_, i) => ({
-    id: i,
-    color: i % 3 === 0 ? '#ff2d78' : i % 3 === 1 ? '#a855f7' : '#e879f9',
+  const displayPartner = partnerName || (isSolo ? 'AI Partner' : 'Partner')
+
+  const particles = Array.from({ length: 25 }, (_, i) => ({
+    id: i, color: i % 3 === 0 ? '#ff2d78' : i % 3 === 1 ? '#a855f7' : '#e879f9',
   }))
 
-  // The specific reference for the element we want to capture as an image
-  const captureRef = useRef<HTMLDivElement>(null)
+  const buildShareText = () => {
+    const lines = questions.map((q, i) => {
+      const myAns = q.options.find(o => o.id === userAnswers[i])?.text || '—'
+      const partnerAns = q.options.find(o => o.id === partnerAnswers[i])?.text || '—'
+      const match = userAnswers[i] === partnerAnswers[i] ? '✓' : '✗'
+      return `${match} ${q.emoji} ${q.text}\n   You: ${myAns}\n   ${displayPartner}: ${partnerAns}`
+    }).join('\n\n')
+    const suffix = isSolo ? `\n\n(Played in Solo mode vs AI partner ${displayPartner})` : ''
+    return `💞 CoupleSync — ${score}% Compatible\n"${title}"\n${message}\n\n${lines}${suffix}\n\nTry it: ${typeof window !== 'undefined' ? window.location.href : ''}`
+  }
 
-  const handleDownload = useCallback(async () => {
-    if (!captureRef.current) return
-    setDownloadState('generating')
-
-    try {
-      // 1. Generate PNG with High Pixel Ratio for Mobile Quality
-      const dataUrl = await toPng(captureRef.current, {
-        cacheBust: true,
-        backgroundColor: '#050508',
-        pixelRatio: 3,
-        style: {
-          borderRadius: '2.5rem'
-        }
-      })
-
-      // 2. Create the download link
-      const link = document.createElement('a')
-      link.download = `CoupleSync-${score}.png`
-      link.href = dataUrl
-
-      // 3. Append, click, and cleanup
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-
-      setDownloadState('success')
-    } catch (err) {
-      console.error('Download error:', err)
-      setDownloadState('error')
-
-      // SAFARI FALLBACK: If direct download fails, open in a new tab for long-press saving
-      const dataUrl = await toPng(captureRef.current)
-      const newWindow = window.open()
-      if (newWindow) {
-        newWindow.document.write(`
-          <body style="margin:0; background:#050508; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; color:white;">
-            <p>Long press image to save to gallery</p>
-            <img src="${dataUrl}" style="width:90%; border-radius:20px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);" />
-            <button onclick="window.close()" style="margin-top:20px; background:white; color:black; border:none; padding:10px 20px; border-radius:10px; font-weight:bold;">Close</button>
-          </body>
-        `)
-      }
-    } finally {
-      setTimeout(() => setDownloadState('idle'), 3000)
+  const handleShare = async () => {
+    const text = buildShareText()
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent)
+    if (navigator.share && isMobile) {
+      try {
+        await navigator.share({ title: `CoupleSync — ${score}% Compatible`, text, url: window.location.href })
+        setShareState('shared')
+        setTimeout(() => setShareState('idle'), 2500)
+        return
+      } catch { /* fall through */ }
     }
-  }, [score])
+    try {
+      await navigator.clipboard.writeText(text)
+      setShareState('copied')
+      setTimeout(() => setShareState('idle'), 2500)
+    } catch {
+      window.prompt('Copy your results:', text)
+    }
+  }
 
   return (
-    <div className="relative flex items-center justify-center py-8 min-h-[100dvh] bg-[#050508] overflow-x-hidden">
-      {/* Dynamic Background Elements */}
-      <div className="fixed inset-0 pointer-events-none z-0">
+    <div className="relative flex items-center justify-center overflow-hidden py-8" style={{ minHeight: '100dvh' }}>
+      <div className="fixed inset-0 pointer-events-none">
         {particles.map(p => <Particle key={p.id} color={p.color} />)}
       </div>
+      <div className="absolute inset-0 opacity-20 pointer-events-none"
+        style={{ background: `radial-gradient(circle at 50% 50%, ${color}40 0%, transparent 70%)` }} />
 
-      <div
-        className="absolute inset-0 opacity-20 pointer-events-none z-0"
-        style={{ background: `radial-gradient(circle at 50% 50%, ${color}40 0%, transparent 70%)` }}
-      />
+      <motion.div className="relative z-10 w-full max-w-lg mx-auto px-4"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+        <motion.div className="rounded-3xl p-6 sm:p-10 text-center"
+          style={{
+            background: 'rgba(5,5,8,0.82)', backdropFilter: 'blur(40px)',
+            border: `1px solid ${color}40`, boxShadow: `0 0 60px ${color}15`,
+          }}
+          initial={{ scale: 0.85, y: 40 }} animate={{ scale: 1, y: 0 }}
+          transition={{ type: 'spring', stiffness: 200, damping: 20, delay: 0.2 }}>
 
-      <div className="relative z-10 w-full max-w-lg mx-auto px-4 flex flex-col items-center">
-
-        {/* --- CAPTURE CONTAINER: Only this part becomes an image --- */}
-        <div
-          ref={captureRef}
-          className="w-full rounded-[2.5rem] p-[2px] shadow-2xl"
-          style={{ background: `linear-gradient(180deg, ${color}80, transparent)` }}
-        >
-          <div
-            className="rounded-[2.4rem] p-10 sm:p-14 text-center relative overflow-hidden h-full bg-[#050508]"
-            style={{ border: `1px solid ${color}20` }}
-          >
-            {/* Inner Glow Decorative Element */}
-            <div className="absolute top-[-20%] left-[-20%] w-64 h-64 opacity-10 rounded-full blur-[80px]" style={{ background: color }} />
-
-            <motion.div
-              className="text-7xl mb-6 relative z-10"
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ type: 'spring', damping: 12 }}
-            >
-              💑
-            </motion.div>
-
-            <div
-              className="relative z-10 font-bold leading-none mb-4"
-              style={{
-                color,
-                textShadow: `0 0 50px ${color}80`,
-                fontSize: 'clamp(5rem, 20vw, 8rem)',
-                fontFamily: 'var(--font-display)'
-              }}
-            >
-              <CountingNumber target={score} />%
-            </div>
-
-            <h2 className="relative z-10 font-bold mb-4 italic uppercase tracking-tighter" style={{ color, fontSize: '2rem' }}>
-              {title}
-            </h2>
-
-            <p className="relative z-10 text-gray-400 text-sm leading-relaxed mb-10 px-4 uppercase tracking-[0.15em] opacity-90">
-              {message}
-            </p>
-
-            <div className="relative z-10 pt-8 border-t border-white/5 opacity-20 text-[10px] tracking-[0.6em] text-white uppercase">
-              CoupleSync.app
-            </div>
-          </div>
-        </div>
-
-        {/* --- ACTION AREA: Buttons are kept outside the captureRef --- */}
-        <div className="w-full mt-10 space-y-4 px-2">
-
-          <motion.button
-            onClick={handleDownload}
-            disabled={downloadState === 'generating'}
-            whileTap={{ scale: 0.96 }}
-            className="w-full py-5 bg-white text-black rounded-2xl font-black flex items-center justify-center gap-3 shadow-[0_0_30px_rgba(255,255,255,0.2)] active:shadow-none transition-all"
-          >
-            {downloadState === 'generating' ? (
-              <span className="flex items-center gap-2">
-                <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                SAVING...
-              </span>
-            ) : downloadState === 'success' ? (
-              <><Check size={22} className="text-green-600" /> SAVED TO DEVICE</>
-            ) : (
-              <><Download size={22} /> DOWNLOAD IMAGE</>
-            )}
-          </motion.button>
-
-          <div className="flex gap-3">
-            <button
-              onClick={onPlayAgain}
-              className="flex-1 py-4 bg-white/5 border border-white/10 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-white/10 transition-colors active:scale-95"
-            >
-              <RotateCcw size={18} /> PLAY AGAIN
-            </button>
-
-            <button
-              onClick={() => setShowAnswers(!showAnswers)}
-              className="px-6 py-4 bg-white/5 border border-white/10 text-white rounded-2xl font-bold flex items-center justify-center transition-colors active:scale-95"
-            >
-              <Sparkles size={18} className={showAnswers ? "text-purple-400" : "text-white"} />
-            </button>
-          </div>
-        </div>
-
-        {/* Expandable Breakdown (Excluded from Image) */}
-        <AnimatePresence>
-          {showAnswers && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden mt-6 w-full px-2"
-            >
-              <div className="space-y-3">
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest text-center mb-4">Detailed Breakdown</p>
-                {questions.map((q, i) => {
-                  const matched = userAnswers[i] === partnerAnswers[i];
-                  return (
-                    <div key={i} className="p-4 bg-white/[0.03] rounded-2xl border border-white/[0.05] flex justify-between items-center group">
-                      <div className="flex flex-col">
-                        <span className="text-gray-500 text-[10px] uppercase mb-1">{q.emoji} Question {i + 1}</span>
-                        <span className="text-gray-300 text-xs font-medium">{q.text}</span>
-                      </div>
-                      <div className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter ${matched ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                        {matched ? 'Match' : 'Miss'}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+          {/* Solo badge */}
+          {isSolo && (
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+              className="mb-4 px-3 py-1 rounded-full text-xs inline-flex items-center gap-1.5"
+              style={{ background: 'rgba(232,121,249,0.1)', border: '1px solid rgba(232,121,249,0.25)', color: '#e879f9' }}>
+              <User size={10} />
+              Solo mode · vs {displayPartner}
             </motion.div>
           )}
-        </AnimatePresence>
-      </div>
+
+          <motion.div className="text-5xl sm:text-6xl mb-4"
+            initial={{ scale: 0, rotate: -180 }} animate={{ scale: 1, rotate: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 15, delay: 0.3 }}>
+            💑
+          </motion.div>
+
+          {/* Score */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="mb-1">
+            <div className="font-bold leading-none" style={{
+              fontFamily: 'var(--font-display)', color,
+              textShadow: `0 0 30px ${color}, 0 0 60px ${color}40`,
+              fontSize: 'clamp(4rem, 20vw, 7rem)',
+            }}>
+              <CountingNumber target={score} /><span style={{ fontSize: 'clamp(1.8rem, 8vw, 3.2rem)' }}>%</span>
+            </div>
+          </motion.div>
+
+          {/* Bar */}
+          <motion.div className="my-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }}>
+            <div className="compatibility-bar">
+              <motion.div className="compatibility-bar-fill"
+                style={{ background: `linear-gradient(90deg, ${color}, #e879f9)`, boxShadow: `0 0 10px ${color}` }}
+                initial={{ width: '0%' }} animate={{ width: `${score}%` }}
+                transition={{ duration: 2, delay: 0.9, ease: 'easeOut' }} />
+            </div>
+          </motion.div>
+
+          <motion.h2 className="font-bold mb-2"
+            style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', color, fontSize: 'clamp(1.6rem, 7vw, 2.4rem)' }}
+            initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}>
+            {title}
+          </motion.h2>
+
+          <motion.p className="text-gray-400 text-sm sm:text-base leading-relaxed mb-5"
+            initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.9 }}>
+            {message}
+            {isSolo && <span className="block text-xs mt-1 opacity-60">Based on your answers vs {displayPartner}'s AI responses</span>}
+          </motion.p>
+
+          {/* Toggle answers */}
+          <motion.button onClick={() => setShowAnswers(!showAnswers)}
+            className="text-sm text-gray-400 mb-4 flex items-center gap-2 mx-auto touch-manipulation"
+            style={{ minHeight: '44px', WebkitTapHighlightColor: 'transparent' }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.2 }}>
+            <Sparkles size={13} />{showAnswers ? 'Hide' : 'Show'} answer comparison
+          </motion.button>
+
+          <AnimatePresence>
+            {showAnswers && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.4 }} className="overflow-hidden mb-5">
+                <div className="space-y-2 text-left">
+                  {questions.map((q, i) => {
+                    const myAnswer = q.options.find(o => o.id === userAnswers[i])
+                    const partnerAnswer = q.options.find(o => o.id === partnerAnswers[i])
+                    const matched = userAnswers[i] === partnerAnswers[i]
+                    return (
+                      <div key={q.id} className="rounded-xl p-3" style={{
+                        background: matched ? 'rgba(74,222,128,0.06)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${matched ? 'rgba(74,222,128,0.2)' : 'rgba(255,255,255,0.07)'}`,
+                      }}>
+                        <p className="text-xs mb-1.5" style={{ color: '#6b7280' }}>{q.emoji} {q.text}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="text-xs">
+                            <span style={{ color: '#ff2d78' }} className="font-medium">You: </span>
+                            <span className="text-gray-300">{myAnswer?.text || 'N/A'}</span>
+                          </div>
+                          <div className="text-xs">
+                            <span style={{ color: '#a855f7' }} className="font-medium">{displayPartner}: </span>
+                            <span className="text-gray-300">{partnerAnswer?.text || 'N/A'}</span>
+                          </div>
+                        </div>
+                        {matched && <div className="text-xs mt-1" style={{ color: '#4ade80' }}>✓ Match!</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Buttons */}
+          <motion.div className="flex flex-col sm:flex-row gap-3"
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1 }}>
+            <button onClick={onPlayAgain} className="btn-neon rounded-full text-sm flex-1 touch-manipulation"
+              style={{ minHeight: '52px', WebkitTapHighlightColor: 'transparent' }}>
+              <span className="flex items-center gap-2 justify-center"><RotateCcw size={14} />Play Again</span>
+            </button>
+            <button onClick={handleShare} className="btn-neon rounded-full text-sm flex-1 touch-manipulation"
+              style={{ borderColor: '#a855f7', boxShadow: '0 0 15px rgba(168,85,247,0.3)', minHeight: '52px', WebkitTapHighlightColor: 'transparent' }}>
+              <span className="flex items-center gap-2 justify-center">
+                {shareState !== 'idle'
+                  ? <><Check size={14} />{shareState === 'copied' ? 'Copied!' : 'Shared!'}</>
+                  : <><Share2 size={14} />Share Result</>}
+              </span>
+            </button>
+          </motion.div>
+
+          <AnimatePresence>
+            {shareState === 'copied' && (
+              <motion.p initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                className="text-xs mt-3" style={{ color: '#a855f7' }}>
+                Results + all answers copied! Paste anywhere 💜
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </motion.div>
     </div>
   )
 }
